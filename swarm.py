@@ -51,7 +51,11 @@ def _is_local_id_lower(local_id_hex: str, remote_id_hex: str, local_pub_raw: byt
         return local_short < remote_short
     # Extremely rare collision on the truncated id: fall back to full pubkey
     # bytes for deterministic role selection (Python-Python safety).
-    return (local_pub_raw or b'') < (remote_pub_raw or b'')
+    if not isinstance(local_pub_raw, (bytes, bytearray)) or len(local_pub_raw) != 32:
+        raise ValueError('local_pub_raw must be 32-byte bytes')
+    if not isinstance(remote_pub_raw, (bytes, bytearray)) or len(remote_pub_raw) != 32:
+        raise ValueError('remote_pub_raw must be 32-byte bytes')
+    return bytes(local_pub_raw) < bytes(remote_pub_raw)
 
 
 def _local_ip():

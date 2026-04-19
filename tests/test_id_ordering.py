@@ -19,6 +19,14 @@ class TestIdOrdering(unittest.TestCase):
         self.assertTrue(_is_local_id_lower(local_id, remote_id, local_pub, remote_pub))
         self.assertFalse(_is_local_id_lower(remote_id, local_id, remote_pub, local_pub))
 
+    def test_collision_requires_valid_32byte_pubkeys(self):
+        local_id = "aaaaaaaaaaaaaaaa111111111111111111111111"
+        remote_id = "aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbb"
+        with self.assertRaises(ValueError):
+            _is_local_id_lower(local_id, remote_id, None, bytes.fromhex("02" * 32))
+        with self.assertRaises(ValueError):
+            _is_local_id_lower(local_id, remote_id, bytes.fromhex("01" * 16), bytes.fromhex("02" * 32))
+
 
 if __name__ == "__main__":
     unittest.main()

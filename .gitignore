@@ -1,1 +1,23 @@
 dist/
+build/
+*.egg-info/
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.DS_Store
+Thumbs.db
+
+# Local peer identities (runtime-generated)
+identity.json
+identity.*.json
