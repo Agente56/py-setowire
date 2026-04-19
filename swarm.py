@@ -37,26 +37,19 @@ from framing import xor_hash, BatchSender, fragment_payload
 from peer import Peer
 from dht_lib import SimpleDHT
 
-
 def _now_ms():
     return time.monotonic() * 1000
 
-
 def _is_local_id_lower(local_id_hex: str, remote_id_hex: str, local_pub_raw: bytes, remote_pub_raw: bytes) -> bool:
-    # The wire handshake carries only 8 bytes of peer id (16 hex chars), so
-    # cross-runtime ordering must compare those truncated ids first.
     local_short = (local_id_hex or '')[:16]
     remote_short = (remote_id_hex or '')[:16]
     if local_short != remote_short:
         return local_short < remote_short
-    # Extremely rare collision on the truncated id: fall back to full pubkey
-    # bytes for deterministic role selection (Python-Python safety).
     if not isinstance(local_pub_raw, (bytes, bytearray)) or len(local_pub_raw) != 32:
         raise ValueError('local_pub_raw must be 32-byte bytes')
     if not isinstance(remote_pub_raw, (bytes, bytearray)) or len(remote_pub_raw) != 32:
         raise ValueError('remote_pub_raw must be 32-byte bytes')
     return bytes(local_pub_raw) < bytes(remote_pub_raw)
-
 
 def _local_ip():
     try:
@@ -67,7 +60,6 @@ def _local_ip():
         return ip
     except Exception:
         return '127.0.0.1'
-
 
 class _SwarmProtocol(asyncio.DatagramProtocol):
     def __init__(self, swarm):
@@ -82,7 +74,6 @@ class _SwarmProtocol(asyncio.DatagramProtocol):
 
     def error_received(self, exc):
         pass
-
 
 class Swarm:
     def __init__(self, opts=None):
@@ -139,12 +130,13 @@ class Swarm:
         self._ihave_buf     = []
         self._payload_cache = PayloadCache(8192)
         self._store         = LRU(opts.get('store_cache_max', SYNC_CACHE_MAX))
+        self._storage       = opts.get('storage', None)
         self._want_pending  = {}
         self._chunk_assembly = {}
         self._topic_hash    = None
         self._dht           = None
         self._hb_handle     = None
-        self._stun_pending  = {}  # txn_id bytes -> handler fn
+        self._stun_pending  = {}
 
         self._loop = asyncio.get_event_loop()
         self._init_task = self._loop.create_task(self._init())
@@ -183,13 +175,29 @@ class Swarm:
         k = key if isinstance(key, str) else key.hex()
         v = value if isinstance(value, bytes) else value.encode()
         self._store.add(k, v)
+        if self._storage:
+            self._loop.create_task(self._storage_set(k, v))
         self._announce_have([k])
+
+    async def _storage_set(self, k: str, v: bytes):
+        try:
+            await self._storage.set(k, v)
+        except Exception:
+            pass
 
     async def fetch(self, key, timeout=SYNC_TIMEOUT):
         k = key if isinstance(key, str) else key.hex()
         local = self._store.get(k)
         if local:
             return local
+        if self._storage:
+            try:
+                disk = await self._storage.get(k)
+                if disk:
+                    self._store.add(k, disk)
+                    return disk
+            except Exception:
+                pass
         fut = self._loop.create_future()
 
         def _timeout():
@@ -430,7 +438,6 @@ class Swarm:
                 return
             tasks = [self._loop.create_task(self._stun_probe(s, 3.0)) for s in STUN_HOSTS]
             first = None
-            # Use as_completed pattern: resolve as soon as we get a valid result
             pending = set(tasks)
             while pending and first is None:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -441,7 +448,6 @@ class Swarm:
                             first = result
                     except Exception:
                         pass
-            # Cancel remaining tasks
             for t in pending:
                 t.cancel()
             if first:
@@ -557,7 +563,6 @@ class Swarm:
     def _recv(self, buf: bytes, addr: tuple):
         if len(buf) < 2:
             return
-        # STUN success response: type=0x0101, has 20-byte header with txn_id at [8:20]
         if len(buf) >= 20 and struct.unpack_from('>H', buf, 0)[0] == 0x0101 and self._stun_pending:
             txn_key = bytes(buf[8:20])
             handler = self._stun_pending.get(txn_key)
@@ -863,6 +868,8 @@ class Swarm:
                 return
             value = buf[o:o + vlen]
             self._store.add(key, value)
+            if self._storage:
+                self._loop.create_task(self._storage_set(key, value))
             pending = self._want_pending.get(key)
             if pending:
                 pending['handle'].cancel()
@@ -888,6 +895,8 @@ class Swarm:
                 self._chunk_assembly.pop(key, None)
                 value = b''.join(asm['pieces'][i] for i in range(asm['total']))
                 self._store.add(key, value)
+                if self._storage:
+                    self._loop.create_task(self._storage_set(key, value))
                 pending = self._want_pending.get(key)
                 if pending:
                     pending['handle'].cancel()
@@ -896,7 +905,7 @@ class Swarm:
                         pending['future'].set_result(value)
                 self._emit('sync', key, value)
 
-    def _check_become_relay(self):
+def _check_become_relay(self):
         if self._is_relay:
             return
         if not (self.nat_type in RELAY_NAT_OPEN or self.nat_type == 'full_cone'):
@@ -1304,4 +1313,5 @@ class Swarm:
             'lip':   self._lip,
             'lport': self._lport,
             'nat':   self.nat_type,
-        }
+            }
+
