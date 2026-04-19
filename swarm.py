@@ -905,7 +905,7 @@ class Swarm:
                         pending['future'].set_result(value)
                 self._emit('sync', key, value)
 
-def _check_become_relay(self):    
+def _check_become_relay(self):
         if self._is_relay:
             return
         if not (self.nat_type in RELAY_NAT_OPEN or self.nat_type == 'full_cone'):
